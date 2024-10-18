@@ -1,0 +1,356 @@
+---
+title: "Building the Murine Immune Cell Deconvolution Library"
+author: "Lucas A Salas, Samuel Reynolds"
+output: html_document
+date: "2024-01-12"
+---
+  
+Loading required packages.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(dplyr)
+library(rsample)
+library(BiocParallel)
+library(doFuture)
+library(future.apply)
+library(meffil)
+library(FlowSorted.Blood.EPIC)
+library(future)
+library(data.table)
+library(IDOL)
+'%!in%' <- Negate('%in%')
+```
+
+Loading minfi-preprocessed beta values and phenotype data from the isolated cell type samples.
+
+```{r message=FALSE}
+# Loading the phenotype data for our isolated cell type samples.
+setwd("~/Desktop/Christensen Lab/Mouse Methylation/Data")
+pheno<-read.csv("QC_pheno_corrected.csv", row.names = 1)
+pheno<-pheno[order(pheno$Strain),]
+pheno<-pheno[order(pheno$CellType),]
+
+# Loading minfi-preprocessed beta values for our isolated cell type samples.
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/betas_noob_collapsed.RData")
+
+# Loading minfi-preprocessed beta values for Zhou et al.'s monocyte samples.
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/betaszhou_noob_collapsed.RData")
+
+# Loading the phenotype data for Zhou et al.'s monocyte samples.
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/annotzhoublood.RData")
+```
+
+IDOL function.
+
+```{r IDOL, fig.height=11, fig.width=11, eval=TRUE, include=FALSE}
+IDOLoptimize2<-function (candDMRFinderObject, trainingBetas, trainingCovariates, 
+                         libSize = 300, maxIt = 500, numCores = 1) 
+{
+  require(quadprog)
+  require(doFuture)
+  require(future)
+  expit = function(w) exp(w)/(1 + exp(w))
+  logit = function(w) log(w) - log(1 - w)
+  R2compute = function(obs, pred) {
+    r2 = NULL
+    for (i in 1:dim(obs)[2]) {
+      y = obs[, i]
+      x = pred[, i]
+      r2[i] = summary(lm(y ~ x))[[8]]
+    }
+    sum(r2)/dim(obs)[2]
+  }
+  polar = function(x, y, scale = 1) {
+    r = sqrt(x^2 + y^2)
+    theta = atan2(y, x)
+    r * cos(theta - (scale * pi/4))
+  }
+  trainingProbes1 = candDMRFinderObject$candidateSet
+  coefEsts = candDMRFinderObject$coefEsts
+  P = length(trainingProbes1)
+  ProbVector = rep(1/P, P)
+  V = libSize
+  B = maxIt
+  R2.null = 0
+  R2Vals = NULL
+  RMSE.null = 10000
+  RMSEVals = NULL
+  cellTypes = colnames(coefEsts)
+  K = length(cellTypes)
+  if (sum(cellTypes %in% colnames(trainingCovariates)) != K) {
+    stop("cell type names in target covariate data are not consistent with cell types to be deconvoluted")
+  }
+  cl <- makeCluster(numCores, type = "FORK")
+  registerDoFuture()
+  plan(multisession)#, workers = cl,.cleanup = TRUE)
+  for (i in 1:B) {
+    Probes = sample(1:P, V, prob = ProbVector)
+    CpGNames = trainingProbes1[Probes]
+    Beta = coefEsts[CpGNames, ]
+    Lwbc = diag(ncol(Beta))
+    ctpred = data.frame(minfi:::projectCellType(trainingBetas[CpGNames, 
+    ], Beta))
+    omega.tilde = 100 * ctpred
+    omega.obs = trainingCovariates[, cellTypes]
+    diff = as.matrix(omega.tilde - omega.obs)
+    RMSE = sqrt(sum(diff^2)/K)
+    R2 = R2compute(omega.obs, omega.tilde)
+    Perform.q = foreach(j = 1:length(CpGNames)) %dopar% {
+      Beta.q = Beta[CpGNames[-j], ]
+      ctpred.q = data.frame(minfi:::projectCellType(trainingBetas[CpGNames[-j], 
+      ], Beta.q, Lwbc))
+      omega.tilde.q = 100 * ctpred.q
+      diff.q = as.matrix(omega.tilde.q - omega.obs)
+      RMSE.q = sqrt(sum(diff.q^2)/K)
+      R2.q = R2compute(omega.obs, omega.tilde.q)
+      cbind(R2.q, RMSE.q)
+    }
+    R2.q = unlist(Perform.q)[seq(from = 1, to = (2 * V - 
+                                                   1), by = 2)]
+    RMSE.q = unlist(Perform.q)[seq(from = 2, to = 2 * V, 
+                                   by = 2)]
+    rmse.dq = (RMSE - RMSE.q) * (-1)
+    norm.rmse = (rmse.dq)/sd(rmse.dq)
+    r2.dq = (R2 - R2.q)
+    norm.r2 = (r2.dq)/sd(r2.dq)
+    p1 = polar(norm.rmse, norm.r2)
+    for (j in 1:length(Probes)) {
+      p0 = ProbVector[[Probes[j]]]
+      ProbVector[[Probes[j]]] = expit(p1[j]) * p0 + p0/2
+    }
+    ProbVector = ProbVector/sum(ProbVector)
+    if (RMSE <= RMSE.null & R2 >= R2.null) {
+      RMSE.null = RMSE
+      R2.null = R2
+      print(paste("Iteration: ", i, " RMSE=", 
+                  round(RMSE, 3), "; R2=", round(R2, 3), 
+                  sep = ""))
+      IDOL.optim.DMRs = CpGNames
+      IDOL.optim.coefEsts = coefEsts[CpGNames, ]
+      
+    }
+    RMSEVals[i] = RMSE
+    R2Vals[i] = R2
+  }
+  stopCluster(cl)
+  plan(sequential)## Explicitly close multisession workers by switching plan
+  gc()
+  closeAllConnections()
+  IDOLObjects = list(IDOL.optim.DMRs, IDOL.optim.coefEsts, 
+                     RMSEVals, R2Vals, B, V)
+  names(IDOLObjects) = c("IDOL Optimized Library", "IDOL Optimized CoefEsts", 
+                         "RMSE", "R2", "Number of Iterations", 
+                         "LibrarySize")
+  save(IDOL.optim.DMRs, IDOL.optim.coefEsts, IDOLObjects, file = paste("IDOL optimized DMR library_", 
+                                                                       V, ".RData", sep = ""))
+  print(paste("The Average RMSE = ", round(RMSE.null, 
+                                           3), " and R2 = ", round(R2.null, 3), " for the IDOL Optimized Library", 
+              sep = ""))
+  return(IDOLObjects)
+}
+```
+
+Building the combined beta and phenotype matrices.
+
+```{r IDOL fix Figure 2a 2b 2c, fig.height=11, fig.width=11}
+# Defining the cell types.
+cellTypes = c("B", "CD4", "CD8",
+              "Monocyte", "NK", "PMN")
+betas <- betas[,row.names(pheno)]
+
+
+# Removing whole blood and macrophage samples.
+pheno3<-pheno[pheno$CellType%in%c("B", #"Blood", 
+                                  "CD4", "CD8", "DC",  
+                                  #"Macrophage", 
+                                  "Monocyte", "NK", "PMN") & is.na(pheno$OxBS) & pheno$Problem=="None",]
+pheno$SB<-stringi::stri_sub(pheno$MouseID,1,1)
+pheno3$SB<-stringi::stri_sub(pheno3$MouseID,1,1)
+pheno3$Subject2<-stringi::stri_sub(pheno3$MouseID,2,3)
+pheno$Subject2<-stringi::stri_sub(pheno$MouseID,2,3)
+pheno3<-pheno3[order(pheno3$CellType),]
+
+
+# Loading mouse methylation genome annotation.
+mf=data.table::fread("MouseMethylation-12v1-0_A2.csv", skip = 7)
+annot<-as.data.frame(mf)
+rownames(annot)<-annot$IlmnID
+annot<-annot[annot$Name %in% rownames(betas),]
+
+
+# Removing probes mapping to sex and mitochondrial chromosomes, SNPs, and non-CpG probes.
+annot<-annot[annot$MFG_Change_Flagged==FALSE & annot$CHR!="Y" &
+               annot$CHR!="MT" & annot$CHR!="X" & annot$CHR!="0" &
+               annot$Probe_Type=="cg",]
+
+
+# Filtering problematic probes from beta matrix.
+Ext_deconv_betas2<-betas[rownames(betas)%in% annot$Name,]
+
+
+# Removing probes with missing values.
+Ext_deconv_betas3<-Ext_deconv_betas2[complete.cases(Ext_deconv_betas2),]
+
+
+# The base betas.
+subset1a<-Ext_deconv_betas3[, colnames(Ext_deconv_betas3) %in% rownames(pheno3)]
+pheno3<-pheno3[colnames(subset1a),]
+
+
+# Creating the beta and pheotype matrices for the whole blood samples only.
+wholeBloodNames <- row.names(pheno[pheno$CellType2 == "WBC",])
+MIXbetas_WholeBloodOnly <- Ext_deconv_betas3[, colnames(Ext_deconv_betas3) %in% wholeBloodNames]
+
+phenosubset_WholeBloodOnly <- pheno[row.names(pheno) %in% colnames(MIXbetas_WholeBloodOnly),]
+phenosubset_WholeBloodOnly$CD4<-phenosubset_WholeBloodOnly$CD4T
+phenosubset_WholeBloodOnly$CD8<-phenosubset_WholeBloodOnly$CD8T
+
+MIXbetas_WholeBloodOnly<-MIXbetas_WholeBloodOnly[,phenosubset_WholeBloodOnly$Problem=="None"]
+phenosubset_WholeBloodOnly<-phenosubset_WholeBloodOnly[phenosubset_WholeBloodOnly$Problem=="None",]
+
+
+# Combining the beta and phenotype matrices for the Zhou monocytes and our isolated cell type samples. --
+
+ZhouMonocytes <- annotzhoublood[annotzhoublood$CellType == "Mono",]
+
+# Removing a poor quality sample.
+ZhouMonocytes <- ZhouMonocytes[row.names(ZhouMonocytes) != "GSM5587771_204879580011_R05C01",]
+
+betaszhou <- betaszhou[row.names(betaszhou) %in% row.names(subset1a),]
+betaszhou_Mono <- betaszhou[,colnames(betaszhou) %in% row.names(ZhouMonocytes)]
+
+# Creating the combined beta matrix.
+allBetas <- cbind(subset1a,betaszhou_Mono)
+
+# Removing CpGs with NA values.
+allBetas <- allBetas[complete.cases(allBetas),]
+
+# Creating the combined phenotype matrix.
+pheno3$ID <- row.names(pheno3)
+annotzhoublood_Mono <- annotzhoublood[row.names(annotzhoublood) %in% row.names(ZhouMonocytes),]
+annotzhoublood_Mono$ID <- row.names(annotzhoublood_Mono)
+annotzhoublood_Mono$mouseage <- annotzhoublood_Mono$Mouse_Age_Months
+allPheno <- rbindlist(list(pheno3,annotzhoublood_Mono), fill = T)
+allPheno$CellType <- sub("Mono","Monocyte",allPheno$CellType)
+allPheno$CellType <- sub("Monocytecyte","Monocyte",allPheno$CellType)
+allPheno <- allPheno[allPheno$CellType != "DC",]
+
+# Removing our monocytes
+allPheno <- allPheno[-c(25,26,27,28),]
+allBetas <- allBetas[,colnames(allBetas) %in% allPheno$ID]
+allPheno$Age <- c(allPheno$mouseage[1:38]/4,allPheno$mouseage[39:44])
+save(allPheno, file = "~/Desktop/Christensen Lab/Mouse Methylation/Data/allPheno.RData")
+save(allBetas, file = "~/Desktop/Christensen Lab/Mouse Methylation/Data/allBetas.RData")
+```
+
+Creating the candidate object to be trained by IDOLoptimize2 - 1798 candidate CpG sites.
+
+```{r IDOL filtered cells, fig.height=11, fig.width=11}
+cellTypes = c("B", "CD4", "CD8",  
+              "Monocyte", "NK", "PMN")
+referencePdAll<-allPheno[allPheno$CellType%in%cellTypes,]
+rowNames <- referencePdAll$ID
+referencePdAll <- as.matrix(referencePdAll)
+row.names(referencePdAll) <- rowNames
+referenceBetasAll<-allBetas[, colnames(allBetas)%in%row.names(referencePdAll)]
+referencePdAll <- referencePdAll[,c("Sex","CellType")]
+referencePdAll <- as.data.frame(referencePdAll)
+
+# Creating the Candidate Object
+candObjectAll = CandidateDMRFinder.v2(cellTypes, referenceBetasAll, referencePdAll, M = 150, equal.variance = F)
+
+save(candObjectAll, file = "~/Desktop/Christensen Lab/Mouse Methylation/Data/candObjectAll.RData")
+```
+
+Outlier identification.
+
+```{r}
+# Loading the differences between predicted and observed cell type proportions from the first iteration of IDOL training.
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/diffAllSamples.RData")
+
+# Adding up the total error for each sample.
+diffAbs <- abs(diff)
+diffAbs <- as.data.frame(diffAbs)
+diffAbs$SampleID <- row.names(diffAbs)
+diffAbs$TotalError <- diffAbs$B + diffAbs$CD4 + diffAbs$CD8 + diffAbs$Monocyte + diffAbs$NK + diffAbs$PMN
+diffAbs$X <- rep("Total Error", nrow(diffAbs))
+
+totalErrorSubset <- diffAbs[diffAbs$TotalError > 34,]
+
+# Plotting the total error for each samples to identify outliers. 
+diffAbsTotalError <- ggplot(data = diffAbs, aes(x = X, y = TotalError)) + 
+  geom_boxplot(outlier.alpha = 0) + geom_point(data = totalErrorSubset, aes(color = factor(SampleID)), position = "jitter") +
+  geom_point(data = diffAbs[diffAbs$SampleID %!in% totalErrorSubset$SampleID,], color = "black", position = "jitter") +
+  theme(panel.border = element_rect(color = "black",
+                                    fill = NA,
+                                    size = 1),
+        panel.background = element_blank())
+diffAbsTotalError
+```
+
+Training and testing
+
+```{r}
+# Removing outliers
+outliers <- totalErrorSubset$SampleID
+phenoFinal <- phenosubset_WholeBloodOnly[row.names(phenosubset_WholeBloodOnly) %!in% outliers,]
+phenoFinal$Age <- phenoFinal$mouseage/4
+
+# Splitting data into training, testing, and validation set
+set.seed(26)
+phenoFinal_split <- initial_split(phenoFinal, prop = 0.80, strata = Strain)
+
+# Testing set
+testingCovariates <- testing(phenoFinal_split)
+
+# Trainin set
+trainingCovariates <- training(phenoFinal_split)
+
+# Splitting into train and test
+dim(trainingCovariates) # 22
+dim(testingCovariates) # 8
+
+trainingBetas <- MIXbetas_WholeBloodOnly[,colnames(MIXbetas_WholeBloodOnly) %in% row.names(trainingCovariates)]
+# Changing the order of the covariate data to match the beta value
+trainingCovariates <- trainingCovariates[colnames(trainingBetas),]
+
+testingBetas <- MIXbetas_WholeBloodOnly[,colnames(MIXbetas_WholeBloodOnly) %in% row.names(testingCovariates)]
+# Changing the order of the covariate data to match the beta value
+testingCovariates <- testingCovariates[colnames(testingBetas),]
+
+dim(trainingBetas) # 22
+dim(testingBetas) # 8
+
+colnames(trainingBetas) == row.names(trainingCovariates)
+colnames(testingBetas) == row.names(testingCovariates)
+
+save(trainingCovariates, file = "~/Desktop/Christensen Lab/Mouse Methylation/Data/trainingCovariates.RData")
+save(trainingBetas, file = "~/Desktop/Christensen Lab/Mouse Methylation/Data/trainingBetas.RData")
+save(testingCovariates, file = "~/Desktop/Christensen Lab/Mouse Methylation/Data/testingCovariates.RData")
+save(testingBetas, file = "~/Desktop/Christensen Lab/Mouse Methylation/Data/testingBetas.RData")
+```
+
+Running IDOL - takes multiple days to train.
+
+```{r}
+x = Sys.time()
+
+# Training 11 models from library size 200 to 700 with a step size of 50 using IDOL.
+for (i in seq(from = 200, to = 700, by =50)){
+  set.seed(1234)
+  assign(paste0("IDOLopt_mouse_minfiNoob_", i), IDOLoptimize2(candObjectAll, trainingBetas, trainingCovariates, 
+                                                              libSize = i, maxIt = 500, numCores = 20))
+}
+
+y = Sys.time()
+print(y-x)
+
+setwd("~/Desktop/Christensen Lab/Mouse Methylation")
+save(IDOLopt_mouse_minfiNoob_200,IDOLopt_mouse_minfiNoob_250,IDOLopt_mouse_minfiNoob_300,IDOLopt_mouse_minfiNoob_350,IDOLopt_mouse_minfiNoob_400,IDOLopt_mouse_minfiNoob_450,IDOLopt_mouse_minfiNoob_500,IDOLopt_mouse_minfiNoob_550,IDOLopt_mouse_minfiNoob_600,IDOLopt_mouse_minfiNoob_650,IDOLopt_mouse_minfiNoob_700, file= "Mouse IDOL Minfi Noob libraries.rda")
+```
+
+Printing the session info.
+
+```{r}
+sessionInfo()
+```

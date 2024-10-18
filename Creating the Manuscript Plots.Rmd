@@ -1,0 +1,751 @@
+---
+title: "Creating the Manuscript Plots"
+author: "Lucas A Salas, Samuel Reynolds"
+output: html_document
+date: "2024-01-12"
+---
+
+Loading required packages.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(ggplot2)
+library(cowplot)
+library(pheatmap)
+library(IDOL)
+library(meffil)
+library(tidyr)
+```
+
+Loading methylation libraries.
+
+```{r}
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/Mouse IDOL Minfi Noob libraries.rda")
+```
+
+Reporting the performance of each model - RMSE and R^2.
+
+```{r}
+# 200 "The Average RMSE = 10.595 and R2 = 0.688 for the IDOL Optimized Library"
+#250 "The Average RMSE = 10.436 and R2 = 0.759 for the IDOL Optimized Library"
+#300 "The Average RMSE = 10.016 and R2 = 0.752 for the IDOL Optimized Library"
+#350 "The Average RMSE = 9.915 and R2 = 0.756 for the IDOL Optimized Library"
+#400 "The Average RMSE = 9.793 and R2 = 0.744 for the IDOL Optimized Library"☺
+#450 "The Average RMSE = 10.188 and R2 = 0.76 for the IDOL Optimized Library"
+#500 "The Average RMSE = 10.251 and R2 = 0.757 for the IDOL Optimized Library"
+#550 "The Average RMSE = 10.317 and R2 = 0.756 for the IDOL Optimized Library"
+#600 "The Average RMSE = 10.359 and R2 = 0.763 for the IDOL Optimized Library"
+#650 "The Average RMSE = 10.785 and R2 = 0.768 for the IDOL Optimized Library"
+#700 "The Average RMSE = 10.601 and R2 = 0.757 for the IDOL Optimized Library"
+matrixEPICIDOL_All<-matrix(data = NA, nrow=11, ncol = 2,
+                           dimnames = list(paste0("CpG_",
+                                                  seq(from = 200, to = 700, by =50)),
+                                           c("RMSE", "R2")))
+for (i in  seq(from = 200, to = 700, by =50)){
+  IDOLtmp<-get(paste0("IDOLopt_mouse_minfiNoob_",i))
+  for (j in 1:500){
+    if (j==1){
+      RMSE=RMSE.null=IDOLtmp$RMSE[j]
+      R2=R2.null=IDOLtmp$R2[j]
+    }else{
+      if (IDOLtmp$RMSE[j] <= RMSE.null & IDOLtmp$R2[j] >= R2.null) {
+        RMSE.null = IDOLtmp$RMSE[j]
+        R2.null = IDOLtmp$R2[j]
+        #print(paste("Iteration: ", j, " RMSE=",
+        #    round(IDOLtmp$RMSE[j], 3), "; R2=", round(IDOLtmp$R2[j], 3),
+        #    sep = ""))
+      }
+    }
+  }
+  print(paste("The Average RMSE = ", round(RMSE.null,
+                                           3), " and R2 = ", round(R2.null, 3), " for the IDOL Optimized Library ",i,
+              sep = ""))
+  matrixEPICIDOL_All[paste0("CpG_",i), 1]<-RMSE.null
+  matrixEPICIDOL_All[paste0("CpG_",i), 2]<-R2.null
+}
+```
+
+Creating the R^2 and RMSE plots.
+
+```{r}
+# R2 and RMSE Plots
+matrixEPICIDOL_All <- as.data.frame(matrixEPICIDOL_All)
+matrixEPICIDOL_All$`Library Size` <- seq(from = 200, to = 700, by =50)
+matrixEPICIDOL_All$`Library Size` <- as.factor(matrixEPICIDOL_All$`Library Size`)
+
+blue_palette <- c("#bdd7ef", "#a3c2e8", "#8aaedf", "#719ac8", "#5987b3", "#43759e", "#30638a", "#1e5176", "#0e405f", "#002f4a", "#001f34")
+
+# R2 Plot
+R2Plot <- ggplot(data = matrixEPICIDOL_All, aes(x = `Library Size`, y = R2, fill = `Library Size`)) +                 geom_bar(stat = "identity") +
+  scale_fill_manual(values = blue_palette) +
+  labs(x= "Deconvolution Library Size", y= "R2",) + coord_cartesian(ylim=c(0.83, 0.9)) +
+  geom_text(aes(label = round(R2,3)), vjust = -0.25, size = 3, 
+            fontface = "bold") +
+  theme(legend.position = "none",
+        axis.line.x.bottom = element_line(color = 'black'),
+        axis.line.y.left = element_line(color = 'black'),
+        axis.line.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+R2Plot
+
+# RMSE Plot
+RMSEPlot <- ggplot(data = matrixEPICIDOL_All, aes(x = `Library Size`, y = RMSE, fill = `Library Size`)) + 
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = blue_palette) +
+  geom_text(aes(label = round(RMSE,2)), vjust = -0.25, size = 3,
+            fontface = "bold") + 
+  labs(x= "Deconvolution Library Size", y= "RMSE",) + coord_cartesian(ylim=c(7.5, 10)) +
+  theme(legend.position = "none",
+        axis.line.x.bottom = element_line(color = 'black'),
+        axis.line.y.left = element_line(color = 'black'),
+        axis.line.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank())
+RMSEPlot
+
+# Buliding a combined plot.
+R2_and_RMSE_Plot <- plot_grid(R2Plot, RMSEPlot, nrow = 2, labels = c("A","B"))
+R2_and_RMSE_Plot
+ggsave(filename = "~/Desktop/Christensen Lab/Mouse Methylation/Final Figures/Final R2 and RMSE Plot.png", plot = R2_and_RMSE_Plot, units = "in", height = 8, width = 8)
+```
+
+Creating the clustered methylation heat maps across cell types.
+
+```{r}
+# Loading the beta values and phenotype data.
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/allBetas.RData")
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/allPheno.RData")
+
+# IDOL DMCs
+allBetas_DMCs <- allBetas[row.names(allBetas) %in% IDOLopt_mouse_minfiNoob_300$`IDOL Optimized Library`,]
+allBetas_DMCs <- allBetas_DMCs[,colnames(allBetas_DMCs) %in% allPheno$ID]
+allBetas_DMCs <- as.data.frame(allBetas_DMCs)
+
+# Taking the average beta value across cell types.
+allBetas_DMCs$B <- rowMeans(allBetas_DMCs[, allPheno[allPheno$CellType == "B", c("ID")]])
+allBetas_DMCs$CD4 <- rowMeans(allBetas_DMCs[, allPheno[allPheno$CellType == "CD4", c("ID")]])
+allBetas_DMCs$CD8 <- rowMeans(allBetas_DMCs[, allPheno[allPheno$CellType == "CD8", c("ID")]])
+allBetas_DMCs$Mono <- rowMeans(allBetas_DMCs[, allPheno[allPheno$CellType == "Monocyte", c("ID")]])
+allBetas_DMCs$NK <- rowMeans(allBetas_DMCs[, allPheno[allPheno$CellType == "NK", c("ID")]])
+allBetas_DMCs$PMN <- rowMeans(allBetas_DMCs[, allPheno[allPheno$CellType == "PMN", c("ID")]])
+
+# Creating the two data frames to be used in the heatmaps - averaged betas and individual samples.
+allBetas_DMCs_averaged <- allBetas_DMCs[,45:50]
+allBetas_DMCs <- allBetas_DMCs[,1:44]
+
+annotation_col=data.frame(Strain=allPheno$Strain, Sex=allPheno$Sex, CellType=allPheno$CellType,
+                          row.names = allPheno$ID)
+annotation_col_average=data.frame(CellType=c("B","CD4","CD8","Monocyte","NK","PMN"),
+                                  row.names = c("B","CD4","CD8","Monocyte","NK","PMN"))
+
+ann_colors = list(
+  Sex = c(Female = "#56c7b4", Male = "#4489b3"),
+  CellType = c(B="#1B9E77", CD4="#D95F02",
+               CD8 ="#7570B3", Monocyte="#E7298A",
+               NK="#E6AB02", PMN="#66A61E"),
+  Strain = c(`BALB/c` = "#a83240", `C57BL/6` = "#fab22d", `C57BL/6J` = "#dfed5c")
+)
+
+ann_colors_average = list(
+  CellType = c(B="#1B9E77", CD4="#D95F02",
+               CD8 ="#7570B3", Monocyte="#E7298A",
+               NK="#E6AB02", PMN="#66A61E")
+)
+
+# Clustered heatmap: CpG probes v. beta values for all samples.
+pheatmap(allBetas_DMCs, 
+         color = colorRampPalette(c("yellow", "black", "blue"), space = "Lab")(128), 
+         annotation_colors = ann_colors,
+         annotation_col = annotation_col,
+         fontsize = 16,
+         main = "Mouse Reference Library",show_rownames = FALSE,
+         cluster_cols = T, cluster_rows = T, labels_col = allPheno$CellType, 
+         #filename = "~/Desktop/Christensen Lab/Mouse Methylation/Supplementary Heat Map.png", 
+         width = 16, height = 14)
+
+# Clustered heatmap: CpG probes v. averaged beta values per cell type.
+pheatmap(allBetas_DMCs_averaged, 
+         color = colorRampPalette(c("yellow", "black", "blue"), space = "Lab")(128), 
+         annotation_colors = ann_colors_average,
+         annotation_col = annotation_col_average,
+         fontsize = 16,
+         main = "Mouse Reference Library",show_rownames = FALSE,
+         cluster_cols = T, cluster_rows = T, labels_col = c("CD4","B","CD8","Monocyte","NK","PMN"), 
+         #filename = "~/Desktop/Christensen Lab/Mouse Methylation/Final Heat Map.png", 
+         width = 16, height = 14)
+```
+
+Creating the function to plot model performance for each cell type.
+
+```{r}
+cellTypes = c("B", "CD4", "CD8",  
+              "Monocyte", "NK", 
+              "PMN")
+
+groups<-c( "B"="#1B9E77", 
+           CD4="#D95F02",
+           CD8 ="#7570B3",
+           Monocyte="#E7298A",
+           NK="#E6AB02", PMN="#66A61E")
+
+cellcolors = groups #brewer.pal(6,"Set2")
+K = length(cellTypes)  # number of cell types
+
+# Plotting function.
+combPlotFunction <- function(predDF, obsDF, plotname){
+  for(k in 1:K) {
+    if (k < 3){
+      pred = as.numeric(predDF[,cellTypes[k]])
+      obs = as.numeric(obsDF[,cellTypes[k]])
+      R2 = cor(obs, pred, method = "pearson")^2
+      RMSE = sqrt(sum((pred - obs)^2/length(pred)))
+      
+      rangexy = range(c(pred,obs))
+      
+      p <- ggplot(data = data.frame(obs = obs, pred = pred), aes(x = obs, y = pred)) +
+        geom_point(size = 5, colour = cellcolors[cellTypes[k]]) + xlim(rangexy) + ylim(rangexy) +
+        labs(title = cellTypes[k],
+             subtitle = paste("RMSE = ", round(RMSE, 2), "; R2 = ", round(R2, 2), sep = ""),
+             x = "Observed (%)",
+             y = "Predicted (%)") +
+        geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+        theme(plot.title = element_text(face="bold", size=18, hjust = 0.5),
+              plot.subtitle = element_text(face="bold", size=16, hjust = 0.5),
+              axis.title = element_text(size = 14),
+              axis.text = element_text(size = 14),
+              panel.border = element_rect(color = "black",
+                                          fill = NA,
+                                          size = 1),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank())
+      
+      # Regression Line
+      reg<-lm(formula = pred ~ obs,data=data.frame(obs = obs, pred = pred)) 
+      coeff<-coefficients(reg)          
+      intercept<-coeff[1]
+      slope<- coeff[2]
+      
+      p <- p + geom_abline(intercept = intercept, slope = slope, color=cellcolors[cellTypes[k]], size=1)
+      
+      eval(call("<<-", as.name(paste(plotname, cellTypes[k], sep = "")), p))
+      
+    } else {
+      pred = as.numeric(predDF[,cellTypes[k]])
+      obs = as.numeric(obsDF[,cellTypes[k]])
+      R2 = cor(obs, pred, method = "pearson")^2
+      RMSE = sqrt(sum((pred - obs)^2/length(pred)))
+      
+      
+      p <- ggplot(data = data.frame(obs = obs, pred = pred), aes(x = obs, y = pred)) +
+        geom_point(size = 5, colour = cellcolors[cellTypes[k]]) + xlim(c(0,20)) + ylim(c(0,20)) +
+        labs(title = cellTypes[k],
+             subtitle = paste("RMSE = ", round(RMSE, 2), "; R2 = ", round(R2, 2), sep = ""),
+             x = "Observed (%)",
+             y = "Predicted (%)") +
+        geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") +
+        theme(plot.title = element_text(face="bold", size=18, hjust = 0.5),
+              plot.subtitle = element_text(face="bold", size=16, hjust = 0.5),
+              axis.title = element_text(size = 14),
+              axis.text = element_text(size = 14),
+              panel.border = element_rect(color = "black",
+                                          fill = NA,
+                                          size = 1),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank())
+      
+      # Regression Line
+      reg<-lm(formula = pred ~ obs,data=data.frame(obs = obs, pred = pred)) 
+      coeff<-coefficients(reg)          
+      intercept<-coeff[1]
+      slope<- coeff[2]
+      
+      p <- p + geom_abline(intercept = intercept, slope = slope, color=cellcolors[cellTypes[k]], size=1)
+      
+      eval(call("<<-", as.name(paste(plotname, cellTypes[k], sep = "")), p))
+    }
+  }
+}
+```
+
+Plotting model performance across cell types for the training and testing data, as well as comparing it to the performance of a Meffil-based model.
+
+```{r}
+# Loading the training and testing data.
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/trainingCovariates.RData")
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/trainingBetas.RData")
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/testingCovariates.RData")
+load("~/Desktop/Christensen Lab/Mouse Methylation/Data/testingBetas.RData")
+
+# ================================================================================================
+# TRAINING 
+# ================================================================================================
+
+# Subset the training data to consist of only the CpG sites contained in the IDOL optimized library.
+trainingBetas.sub = trainingBetas[IDOLopt_mouse_minfiNoob_300[["IDOL Optimized Library"]],]
+
+# Extract the coefEsts object from the IDOL optimized model.
+coefEsts = IDOLopt_mouse_minfiNoob_300[["IDOL Optimized CoefEsts"]]
+
+# Predict cell type composistion.
+predictedCellFractionTraining = round(projectWBCnew(trainingBetas.sub, coefEsts)*100,1)
+
+# Visualize the results.
+combPlotFunction(predDF = predictedCellFractionTraining, obsDF = trainingCovariates, plotname = "TrainingPlot_")
+
+row1 <- plot_grid(TrainingPlot_B, TrainingPlot_CD4, TrainingPlot_CD8, ncol = 3)
+row2 <- plot_grid(TrainingPlot_Monocyte, TrainingPlot_NK, TrainingPlot_PMN, ncol = 3)
+TrainingCombPlot <- plot_grid(row1, row2, nrow = 2) + labs(title = "IDOL")
+
+TrainingCombPlot
+
+
+
+# ================================================================================================
+#TESTING
+# ================================================================================================
+
+# Subset the testing data to consist of only the CpG sites contained in the IDOL optimized library.
+testingBetas.sub = testingBetas[IDOLopt_mouse_minfiNoob_300[["IDOL Optimized Library"]],]
+
+# Extract the coefEsts object from the IDOL optimized model.
+coefEsts = IDOLopt_mouse_minfiNoob_300[["IDOL Optimized CoefEsts"]]
+
+# Predict cell type composistion.
+predictedCellFractionTesting = round(projectWBCnew(testingBetas.sub, coefEsts)*100,1)
+
+# Visualize the results.
+combPlotFunction(predDF = predictedCellFractionTesting, obsDF = testingCovariates, plotname = "TestingPlot_")
+
+row1 <- plot_grid(TestingPlot_B, TestingPlot_CD4, TestingPlot_CD8, ncol = 3)
+row2 <- plot_grid(TestingPlot_Monocyte, TestingPlot_NK, TestingPlot_PMN, ncol = 3)
+testingCombPlot <- plot_grid(row1, row2, nrow = 2) + labs(title = "IDOL")
+
+testingCombPlot
+
+
+
+# ================================================================================================
+# Meffil
+# ================================================================================================
+
+# Identifying differentially methylated CpG sites using Meffil's meffil.cell.type.specific.methylation.
+diff.DMC.all<-meffil.cell.type.specific.methylation(
+  allBetas,
+  cell.types=allPheno$CellType,
+  number.sites = 50,
+  verbose = F
+)
+
+# Subset the testing data to consist of only the CpG sites contained in the Meffil identified library.
+testingBetas.sub = testingBetas[rownames(diff.DMC.all),]
+
+# Extract the coefEsts object from the Meffil identified model.
+coefEsts = diff.DMC.all
+
+# Predict cell type composistion.
+predictedCellFractionMeffil = round(projectWBCnew(testingBetas.sub, coefEsts)*100,1)
+
+# Visualize the results.
+combPlotFunction(predDF = predictedCellFractionMeffil, obsDF = testingCovariates, plotname = "MeffilPlot_")
+
+row1 <- plot_grid(MeffilPlot_B, MeffilPlot_CD4, MeffilPlot_CD8, ncol = 3)
+row2 <- plot_grid(MeffilPlot_Monocyte, MeffilPlot_NK, MeffilPlot_PMN, ncol = 3)
+meffilCombPlot <- plot_grid(row1, row2, nrow = 2)
+
+meffilCombPlot
+
+no_stacks <- plot_grid(TrainingCombPlot,testingCombPlot, nrow = 2)
+no_stacks
+ggsave2(filename = "~/Desktop/Christensen Lab/Mouse Methylation/noStacks300.png", plot = no_stacks, units = "in", height = 15, width = 10)
+
+# ================================================================================================
+# Stacked Bar Charts
+# ================================================================================================
+
+# Stacked bar chart function.
+stackedBarChart <- function(data, title, xlab){
+  
+  data$Samples <- seq(1,nrow(data))
+  data$Samples <- as.factor(data$Samples)
+  dfCorrectedForPlot <- data %>% pivot_longer(values_to = "CellTypeProportion",
+                                              names_to = "CellType", "B":"PMN", 
+                                              values_drop_na = TRUE)
+  
+  p <- ggplot(data = dfCorrectedForPlot, aes(fill = CellType, x = Samples, y = CellTypeProportion)) +
+    geom_bar(position = "stack", stat = "identity", color = "black") + labs(x = xlab,
+                                                                            y = "Cell Type Proportion", title = title)
+  p <- p + theme(axis.line.x.bottom = element_blank(),
+                 axis.line.y.left = element_line(color = 'black'),
+                 axis.line.y.right = element_blank(),
+                 axis.text.y.right = element_blank(),
+                 axis.ticks.y.right = element_blank(),
+                 axis.ticks.x = element_blank(),
+                 axis.text = element_text(size = 14, color = "black"),
+                 axis.title = element_text(size = 14, color = "black"),
+                 panel.border = element_blank(),
+                 panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.background = element_blank(),
+                 legend.position = "none",
+                 plot.title = element_text(face="bold", size = 24))
+  p <- p + scale_fill_manual(values=c(B="#1B9E77", CD4="#D95F02",
+                                      CD8 ="#7570B3", Monocyte="#E7298A",
+                                      NK="#E6AB02", PMN="#66A61E"))
+}
+
+# Stacked bar chart of the cell type proportions across samples using the training samples and IDOL model.
+trainStackedBar <- stackedBarChart(as.data.frame(predictedCellFractionTraining), xlab = "Training Samples", title = "(a) Training")
+trainStackedBar
+
+# Stacked bar chart of the cell type proportions across samples using the testing samples and IDOL model.
+testStackedBar <- stackedBarChart(as.data.frame(predictedCellFractionTesting), xlab = "Testing Samples", title = "(b) Testing")
+testStackedBar
+
+# Stacked bar chart of the cell type proportions across samples using the testing samples and Meffil model.
+meffilStackedBar <- stackedBarChart(as.data.frame(predictedCellFractionMeffil), xlab = "Testing Samples", title = "(c) Meffil")
+meffilStackedBar
+
+
+# Full Combined Plot ------------------------------------------------------------------------------------
+row1 <- plot_grid(trainStackedBar, TrainingCombPlot, ncol = 2, rel_widths = c(2,3))
+row2 <- plot_grid(testStackedBar, testingCombPlot, ncol = 2, rel_widths = c(2,3))
+row3 <- plot_grid(meffilStackedBar, meffilCombPlot, ncol = 2, rel_widths = c(2,3))
+fullCombPlot <- plot_grid(row1, NULL, row2, NULL, row3, nrow=5, rel_heights = c(1,0.05,1,0.05,1))
+fullCombPlot
+ggsave2(filename = "~/Desktop/Christensen Lab/Mouse Methylation/fullCombPlot.png", plot = fullCombPlot, units = "in", height = 20, width = 16)
+```
+
+Comparing errors in cell type prediction between IDOL and Meffil models.
+
+```{r}
+# Absolute error by cell type
+
+# IDOL
+testingBetas.sub = testingBetas[IDOLopt_mouse_minfiNoob_300[["IDOL Optimized Library"]],]
+coefEsts = IDOLopt_mouse_minfiNoob_300[["IDOL Optimized CoefEsts"]]
+# Predicting the cell type proportions using the IDOL model.
+predictedCellFraction = round(projectWBCnew(testingBetas.sub, coefEsts)*100,1)
+predictedCellFraction <- as.data.frame(predictedCellFraction)
+testingCovariatesCellTypes <- testingCovariates[,c("CD4T","CD8T","NK","B","PMN","Monocyte")]
+# Calculating the errors.
+ErrorsIDOL <- data.frame(Holder = c(1,2,3,4,5,6,7,8))
+ErrorsIDOL$Bcell <- predictedCellFraction$B - testingCovariatesCellTypes$B
+ErrorsIDOL$CD4T <- predictedCellFraction$CD4 - testingCovariatesCellTypes$CD4T
+ErrorsIDOL$CD8T <- predictedCellFraction$CD8 - testingCovariatesCellTypes$CD8T
+ErrorsIDOL$Monocyte <- predictedCellFraction$Monocyte - testingCovariatesCellTypes$Monocyte
+ErrorsIDOL$NK <- predictedCellFraction$NK - testingCovariatesCellTypes$NK
+ErrorsIDOL$PMN <- predictedCellFraction$PMN - testingCovariatesCellTypes$PMN
+ErrorsIDOL$Holder <- NULL
+ErrorsIDOL_corrected_for_plots <- ErrorsIDOL %>% pivot_longer(cols = colnames(ErrorsIDOL), names_to = "CellType", values_to = "Error" )
+
+theme_L_border <- function(colour = "black", size = 1, linetype = 1) {
+  structure(
+    function(x = 0, y = 0, width = 1, height = 1, ...) {
+      polylineGrob(
+        x=c(x+width, x, x), y=c(y,y,y+height), ..., default.units = "npc",
+        gp=gpar(lwd=size, col=colour, lty=linetype),
+      )
+    },
+    class = "theme",
+    type = "box",
+    call = match.call()
+  )
+}
+
+# Meffil
+testingBetas.sub.Meffil = testingBetas[rownames(diff.DMC.all),]
+coefEsts.Meffil = diff.DMC.all
+# Predicting the cell type proportions using the Meffil model.
+predictedCellFractionMeffil = round(projectWBCnew(testingBetas.sub.Meffil, coefEsts.Meffil)*100,1)
+predictedCellFractionMeffil <- as.data.frame(predictedCellFractionMeffil)
+# Calculating the errors.
+ErrorsMeffil <- data.frame(Holder = c(1,2,3,4,5,6,7,8))
+ErrorsMeffil$Bcell <- predictedCellFractionMeffil$B - testingCovariatesCellTypes$B
+ErrorsMeffil$CD4T <- predictedCellFractionMeffil$CD4 - testingCovariatesCellTypes$CD4T
+ErrorsMeffil$CD8T <- predictedCellFractionMeffil$CD8 - testingCovariatesCellTypes$CD8T
+ErrorsMeffil$Monocyte <- predictedCellFractionMeffil$Monocyte - testingCovariatesCellTypes$Monocyte
+ErrorsMeffil$NK <- predictedCellFractionMeffil$NK - testingCovariatesCellTypes$NK
+ErrorsMeffil$PMN <- predictedCellFractionMeffil$PMN - testingCovariatesCellTypes$PMN
+ErrorsMeffil$Holder <- NULL
+ErrorsMeffil_corrected_for_plots <- ErrorsMeffil %>% pivot_longer(cols = colnames(ErrorsMeffil), names_to = "CellType", values_to = "Error" )
+
+# Combined Errors Plot
+ErrorsMeffil_corrected_for_plots$Algo <- rep("Meffil",nrow(ErrorsMeffil_corrected_for_plots))
+ErrorsIDOL_corrected_for_plots$Algo <- rep("IDOL",nrow(ErrorsIDOL_corrected_for_plots))
+ErrorsCombined <- rbind(ErrorsIDOL_corrected_for_plots,ErrorsMeffil_corrected_for_plots)
+
+ErrorsCombinedPlot <- ggplot(data = ErrorsCombined, aes(x = Algo, y = Error, 
+                                                        fill = CellType, color = Algo)) +
+  geom_boxplot() + scale_fill_manual(values = c(Bcell="#1B9E77", CD4T="#D95F02",
+                                                CD8T ="#7570B3", Monocyte="#E7298A",
+                                                NK="#E6AB02", PMN="#66A61E")) + 
+  scale_color_manual(values = c(IDOL="black", Meffil="blue")) + 
+  coord_flip() + labs(x= "Cell Type", y= "Estimate (%) - True (%)",) +
+  ylim(-11,11) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black") +
+  geom_hline(yintercept = -5, linetype = "dashed", color = "black") + 
+  geom_hline(yintercept = 5, linetype = "dashed", color = "black") +
+  theme(axis.line.x.bottom = element_line(color = 'black'),
+        axis.line.y.left = element_line(color = 'black'),
+        axis.line.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        panel.border = element_blank(),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text = element_text(size = 14),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "none",
+        axis.text.y = element_text(colour = c("black","blue")))
+ErrorsCombinedPlot
+
+# Global Error Combined Plot
+GlobalErrorsCombined <- rbind(ErrorsMeffil_corrected_for_plots[,c(2,3)],ErrorsIDOL_corrected_for_plots[,c(2,3)])
+
+GlobalErrorsCombinedPlot <- ggplot(data = GlobalErrorsCombined, aes(x = Algo, y = Error, color = Algo)) +
+  geom_boxplot(width = 0.3) +
+  scale_color_manual(values = c(IDOL="black", Meffil="blue")) + 
+  coord_flip() + labs(x= "Cell Type", y= "Estimate (%) - True (%)",) +
+  ylim(-11,11) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "black") +
+  geom_hline(yintercept = -5, linetype = "dashed", color = "black") + 
+  geom_hline(yintercept = 5, linetype = "dashed", color = "black") +
+  theme(axis.line.x.bottom = element_line(color = 'black'),
+        axis.line.y.left = element_line(color = 'black'),
+        axis.line.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y = element_blank(),
+        panel.border = element_blank(),
+        axis.text = element_text(size = 14),
+        axis.title = element_text(size = 16),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "none",
+        axis.text.y = element_text(colour = c("black","blue")))
+GlobalErrorsCombinedPlot
+
+# Total Error Combine Plot
+ErrorsIDOL$`Total Error` <- rowSums(abs(ErrorsIDOL))
+ErrorsIDOL$Algo <- rep("IDOL", nrow(ErrorsIDOL))
+ErrorsMeffil$`Total Error` <- rowSums(abs(ErrorsMeffil))
+ErrorsMeffil$Algo <- rep("Meffil", nrow(ErrorsMeffil))
+
+TotalErrorsCombined <- rbind(ErrorsIDOL,ErrorsMeffil)
+
+TotalErrorsCombinedPlot <- ggplot(data = TotalErrorsCombined, aes(x = Algo, y = `Total Error`, color = Algo)) +
+  geom_boxplot(width = 0.3) +
+  scale_color_manual(values = c(IDOL="black", Meffil="blue")) + 
+  coord_flip() + labs(x= "Cell Type", y= "Total Error",) +
+  theme(axis.line.x.bottom = element_line(color = 'black'),
+        axis.line.y.left = element_line(color = 'black'),
+        axis.line.y.right = element_blank(),
+        axis.text.y.right = element_blank(),
+        axis.ticks.y.right = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text = element_text(size = 14),
+        axis.title = element_text(size = 16),
+        panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "none",
+        axis.text.y = element_text(colour = c("black","blue")))
+TotalErrorsCombinedPlot
+
+col2 <- plot_grid(GlobalErrorsCombinedPlot, TotalErrorsCombinedPlot, nrow = 2, labels = c("B", "C"), label_size = 18, label_fontface = "bold")
+col1 <- ErrorsCombinedPlot
+
+finalErrorsPlot <- plot_grid(col1, col2, label_size = 18, label_fontface = "bold", labels = c("A","",""))
+finalErrorsPlot
+
+ggsave(filename = "~/Desktop/Christensen Lab/Mouse Methylation/Final Figures/Final Errors Plot.png", plot = finalErrorsPlot, units = "in", height = 12, width = 8)
+```
+
+Building a plot to show the most differentially methylated CpG's in each cell type.
+
+```{r}
+# Cell type specific CpGs.
+cell_specific_CpGs <- c("cg45118317", "cg43964503", "cg43547103", "cg41639691", "cg29054181", "cg34019572")
+
+# Genes that the cell type specific CpGs map to.
+genes <- c("CD19","CD4","CD8A","TMEM51OS1","DYRK2","GM31583")
+
+# Beta values for the cell type specific CpGs.
+cell_specific_betas <- allBetas[row.names(allBetas) %in% cell_specific_CpGs,]
+cell_specific_betas <- t(cell_specific_betas)
+cell_specific_betas <- cell_specific_betas[,cell_specific_CpGs]
+cell_specific_betas <- as.data.frame(cell_specific_betas)
+cell_specific_betas$`Cell Type` <- allPheno$CellType
+cell_specific_betas <- cell_specific_betas %>% mutate(`Cell Type` = ifelse(`Cell Type` == "Monocyte","Mono",`Cell Type`))
+
+# Plotting the beta values across cell types for CpG: cg45118317 which maps to CD19.
+p1 <- ggplot(data = cell_specific_betas, 
+        aes(x = cell_specific_betas[,7], y = cell_specific_betas[,1], 
+            fill = cell_specific_betas[,7])) +
+        geom_boxplot() + 
+        scale_fill_manual(values = c(B="#1B9E77", CD4="#D95F02",
+                                     CD8 ="#7570B3", Monocyte="#E7298A",
+                                     NK="#E6AB02", PMN="#66A61E")) + 
+        labs(x= cell_specific_CpGs[1], y= "Beta Value",) +
+        ggtitle(genes[1]) +
+        theme(axis.line.x.bottom = element_line(color = 'black'),
+              axis.line.y.left = element_line(color = 'black'),
+              axis.line.y.right = element_blank(),
+              axis.text.y.right = element_blank(),
+              axis.ticks.y.right = element_blank(),
+              panel.border = element_blank(),
+              axis.text = element_text(size = 14),
+              axis.title = element_text(size = 14),
+              plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank(),
+              legend.position = "none")
+
+# Plotting the beta values across cell types for CpG: cg43964503 which maps to CD4.
+p2 <- ggplot(data = cell_specific_betas, 
+        aes(x = cell_specific_betas[,7], y = cell_specific_betas[,2], 
+            fill = cell_specific_betas[,7])) +
+        geom_boxplot() + 
+        scale_fill_manual(values = c(B="#1B9E77", CD4="#D95F02",
+                                     CD8 ="#7570B3", Monocyte="#E7298A",
+                                     NK="#E6AB02", PMN="#66A61E")) + 
+        labs(x= cell_specific_CpGs[2], y= "Beta Value",) +
+        ggtitle(genes[2]) +
+        theme(axis.line.x.bottom = element_line(color = 'black'),
+              axis.line.y.left = element_line(color = 'black'),
+              axis.line.y.right = element_blank(),
+              axis.text.y.right = element_blank(),
+              axis.ticks.y.right = element_blank(),
+              panel.border = element_blank(),
+              axis.text = element_text(size = 14),
+              axis.title = element_text(size = 14),
+              plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank(),
+              legend.position = "none")
+
+# Plotting the beta values across cell types for CpG: cg43547103 which maps to CD8A.
+p3 <- ggplot(data = cell_specific_betas, 
+        aes(x = cell_specific_betas[,7], y = cell_specific_betas[,3], 
+            fill = cell_specific_betas[,7])) +
+        geom_boxplot() + 
+        scale_fill_manual(values = c(B="#1B9E77", CD4="#D95F02",
+                                     CD8 ="#7570B3", Monocyte="#E7298A",
+                                     NK="#E6AB02", PMN="#66A61E")) + 
+        labs(x= cell_specific_CpGs[3], y= "Beta Value",) +
+        ggtitle(genes[3]) +
+        theme(axis.line.x.bottom = element_line(color = 'black'),
+              axis.line.y.left = element_line(color = 'black'),
+              axis.line.y.right = element_blank(),
+              axis.text.y.right = element_blank(),
+              axis.ticks.y.right = element_blank(),
+              panel.border = element_blank(),
+              axis.text = element_text(size = 14),
+              axis.title = element_text(size = 14),
+              plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank(),
+              legend.position = "none")
+
+# Plotting the beta values across cell types for CpG: cg41639691 which maps to TMEM51OS1.
+p4 <- ggplot(data = cell_specific_betas, 
+        aes(x = cell_specific_betas[,7], y = cell_specific_betas[,4], 
+            fill = cell_specific_betas[,7])) +
+        geom_boxplot() + 
+        scale_fill_manual(values = c(B="#1B9E77", CD4="#D95F02",
+                                     CD8 ="#7570B3", Monocyte="#E7298A",
+                                     NK="#E6AB02", PMN="#66A61E")) + 
+        labs(x= cell_specific_CpGs[4], y= "Beta Value",) +
+        ggtitle(genes[4]) +
+        theme(axis.line.x.bottom = element_line(color = 'black'),
+              axis.line.y.left = element_line(color = 'black'),
+              axis.line.y.right = element_blank(),
+              axis.text.y.right = element_blank(),
+              axis.ticks.y.right = element_blank(),
+              panel.border = element_blank(),
+              axis.text = element_text(size = 14),
+              axis.title = element_text(size = 14),
+              plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank(),
+              legend.position = "none")
+
+# Plotting the beta values across cell types for CpG: cg29054181 which maps to DYRK2.
+p5 <- ggplot(data = cell_specific_betas, 
+        aes(x = cell_specific_betas[,7], y = cell_specific_betas[,5], 
+            fill = cell_specific_betas[,7])) +
+        geom_boxplot() + 
+        scale_fill_manual(values = c(B="#1B9E77", CD4="#D95F02",
+                                     CD8 ="#7570B3", Monocyte="#E7298A",
+                                     NK="#E6AB02", PMN="#66A61E")) + 
+        labs(x= cell_specific_CpGs[5], y= "Beta Value",) +
+        ggtitle(genes[5]) +
+        theme(axis.line.x.bottom = element_line(color = 'black'),
+              axis.line.y.left = element_line(color = 'black'),
+              axis.line.y.right = element_blank(),
+              axis.text.y.right = element_blank(),
+              axis.ticks.y.right = element_blank(),
+              panel.border = element_blank(),
+              axis.text = element_text(size = 14),
+              axis.title = element_text(size = 14),
+              plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank(),
+              legend.position = "none")
+
+# Plotting the beta values across cell types for CpG: cg34019572 which maps to GM31583.
+p6 <- ggplot(data = cell_specific_betas, 
+        aes(x = cell_specific_betas[,7], y = cell_specific_betas[,6], 
+            fill = cell_specific_betas[,7])) +
+        geom_boxplot() + 
+        scale_fill_manual(values = c(B="#1B9E77", CD4="#D95F02",
+                                     CD8 ="#7570B3", Monocyte="#E7298A",
+                                     NK="#E6AB02", PMN="#66A61E")) + 
+        labs(x= cell_specific_CpGs[6], y= "Beta Value",) +
+        ggtitle(genes[6]) + 
+        theme(axis.line.x.bottom = element_line(color = 'black'),
+              axis.line.y.left = element_line(color = 'black'),
+              axis.line.y.right = element_blank(),
+              axis.text.y.right = element_blank(),
+              axis.ticks.y.right = element_blank(),
+              panel.border = element_blank(),
+              axis.text = element_text(size = 14),
+              axis.title = element_text(size = 14),
+              plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank(),
+              legend.position = "none")
+
+# Creating the combined plot.
+row1 <- plot_grid(p1, p2, p3, ncol = 3)
+row2 <- plot_grid(p4, p5, p6, ncol = 3)
+combPlot <- plot_grid(row1, row2, nrow = 2)
+combPlot
+
+ggsave(filename = "~/Desktop/Christensen Lab/Mouse Methylation/Final Figures/Cell Type Specific Methylation.png", plot = combPlot, units = "in", width = 15, height = 10)
+```
+Printing the session info.
+
+```{r}
+sessionInfo()
+```
